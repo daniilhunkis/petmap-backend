@@ -1,88 +1,109 @@
+import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import uuid, json, os
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy import Column, String, Text
+import uuid
 
-app = FastAPI()
+# ---- Конфигурируем БД ----
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://petmap_db_user:RXvPXSxncNoogTd8lkJsNUzHO38dlvgn@dpg-d1ojk92dbo4c73b5bba0-a:5432/petmap_db")
+engine = create_async_engine(DATABASE_URL, echo=True)
+SessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+Base = declarative_base()
 
-# CORS для фронта (разрешить все, для MVP)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ---- Модели ----
+class MaterialDB(Base):
+    __tablename__ = "materials"
+    id = Column(String, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    img = Column(String, nullable=False)
+    text = Column(Text, nullable=False)
 
-# ===== ХЕЛПЕРЫ =====
-def load_json(filename, fallback=[]):
-    if not os.path.exists(filename):
-        with open(filename, "w") as f: json.dump(fallback, f)
-    with open(filename, "r") as f:
-        try:
-            return json.load(f)
-        except Exception:
-            return fallback
+class StoryDB(Base):
+    __tablename__ = "stories"
+    id = Column(String, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    img = Column(String, nullable=False)
+    url = Column(String, nullable=False)
 
-def save_json(filename, data):
-    with open(filename, "w") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-# ===== МОДЕЛИ =====
 class Material(BaseModel):
-    id: str = None
+    id: str = ""
     title: str
     img: str
     text: str
 
 class Story(BaseModel):
-    id: str = None
+    id: str = ""
     title: str
     img: str
     url: str
 
-# ===== API МАТЕРИАЛОВ =====
-MATERIALS_FILE = "materials.json"
+app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---- Инициализация базы ----
+@app.on_event("startup")
+async def on_startup():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+# ---- Эндпоинты ----
 @app.get("/api/materials")
-def get_materials():
-    return load_json(MATERIALS_FILE, [])
+async def get_materials():
+    async with SessionLocal() as session:
+        mats = await session.execute(
+            MaterialDB.__table__.select().order_by(MaterialDB.id.desc())
+        )
+        return [Material(**dict(m)) for m in mats.fetchall()]
 
 @app.post("/api/materials")
-def add_material(mat: Material):
-    mats = load_json(MATERIALS_FILE, [])
+async def add_material(mat: Material):
     mat.id = str(uuid.uuid4())
-    mats.insert(0, mat.dict())
-    save_json(MATERIALS_FILE, mats)
-    return mat
+    async with SessionLocal() as session:
+        dbmat = MaterialDB(**mat.dict())
+        session.add(dbmat)
+        await session.commit()
+        return mat
 
-@app.delete("/api/materials/{id}")
-def del_material(id: str):
-    mats = load_json(MATERIALS_FILE, [])
-    mats2 = [m for m in mats if m["id"] != id]
-    if len(mats2) == len(mats): raise HTTPException(status_code=404)
-    save_json(MATERIALS_FILE, mats2)
-    return {"ok": True}
-
-# ===== API СТОРИС =====
-STORIES_FILE = "stories.json"
+@app.delete("/api/materials/{mid}")
+async def del_material(mid: str):
+    async with SessionLocal() as session:
+        await session.execute(MaterialDB.__table__.delete().where(MaterialDB.id == mid))
+        await session.commit()
+        return {"ok": True}
 
 @app.get("/api/stories")
-def get_stories():
-    return load_json(STORIES_FILE, [])
+async def get_stories():
+    async with SessionLocal() as session:
+        sts = await session.execute(
+            StoryDB.__table__.select().order_by(StoryDB.id.desc())
+        )
+        return [Story(**dict(s)) for s in sts.fetchall()]
 
 @app.post("/api/stories")
-def add_story(story: Story):
-    sts = load_json(STORIES_FILE, [])
+async def add_story(story: Story):
     story.id = str(uuid.uuid4())
-    sts.insert(0, story.dict())
-    save_json(STORIES_FILE, sts)
-    return story
+    async with SessionLocal() as session:
+        dbstory = StoryDB(**story.dict())
+        session.add(dbstory)
+        await session.commit()
+        return story
 
-@app.delete("/api/stories/{id}")
-def del_story(id: str):
-    sts = load_json(STORIES_FILE, [])
-    sts2 = [s for s in sts if s["id"] != id]
-    if len(sts2) == len(sts): raise HTTPException(status_code=404)
-    save_json(STORIES_FILE, sts2)
+@app.delete("/api/stories/{sid}")
+async def del_story(sid: str):
+    async with SessionLocal() as session:
+        await session.execute(StoryDB.__table__.delete().where(StoryDB.id == sid))
+        await session.commit()
+        return {"ok": True}
+
+@app.get("/")
+async def index():
     return {"ok": True}
