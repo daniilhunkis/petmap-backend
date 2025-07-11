@@ -2,108 +2,103 @@ import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import Column, String, Text
-import uuid
+from sqlalchemy import create_engine, Column, Integer, String, Text
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 
-# ---- Конфигурируем БД ----
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://petmap_db_user:RXvPXSxncNoogTd8lkJsNUzHO38dlvgn@dpg-d1ojk92dbo4c73b5bba0-a:5432/petmap_db")
-engine = create_async_engine(DATABASE_URL, echo=True)
-SessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+# Настройки базы
+DATABASE_URL = os.getenv("DATABASE_URL")
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# ---- Модели ----
-class MaterialDB(Base):
+# Модели
+class Material(Base):
     __tablename__ = "materials"
-    id = Column(String, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
-    img = Column(String, nullable=False)
-    text = Column(Text, nullable=False)
+    img = Column(String)
+    text = Column(Text)
 
-class StoryDB(Base):
+class Story(Base):
     __tablename__ = "stories"
-    id = Column(String, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
-    img = Column(String, nullable=False)
-    url = Column(String, nullable=False)
+    img = Column(String)
+    url = Column(String)
 
-class Material(BaseModel):
-    id: str = ""
+# Создаём таблицы при первом запуске
+Base.metadata.create_all(bind=engine)
+
+# Pydantic-схемы
+class MaterialIn(BaseModel):
     title: str
     img: str
     text: str
 
-class Story(BaseModel):
-    id: str = ""
+class StoryIn(BaseModel):
     title: str
     img: str
     url: str
 
 app = FastAPI()
 
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Можно ограничить ["https://petmap-gray.vercel.app"]
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---- Инициализация базы ----
-@app.on_event("startup")
-async def on_startup():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-# ---- Эндпоинты ----
+# Эндпоинты
 @app.get("/api/materials")
-async def get_materials():
-    async with SessionLocal() as session:
-        mats = await session.execute(
-            MaterialDB.__table__.select().order_by(MaterialDB.id.desc())
-        )
-        return [Material(**dict(m)) for m in mats.fetchall()]
+def get_materials():
+    db = SessionLocal()
+    mats = db.query(Material).all()
+    return [{"id": m.id, "title": m.title, "img": m.img, "text": m.text} for m in mats]
 
 @app.post("/api/materials")
-async def add_material(mat: Material):
-    mat.id = str(uuid.uuid4())
-    async with SessionLocal() as session:
-        dbmat = MaterialDB(**mat.dict())
-        session.add(dbmat)
-        await session.commit()
-        return mat
+def add_material(mat: MaterialIn):
+    db = SessionLocal()
+    new_mat = Material(**mat.dict())
+    db.add(new_mat)
+    db.commit()
+    db.refresh(new_mat)
+    return {"id": new_mat.id, "title": new_mat.title, "img": new_mat.img, "text": new_mat.text}
 
-@app.delete("/api/materials/{mid}")
-async def del_material(mid: str):
-    async with SessionLocal() as session:
-        await session.execute(MaterialDB.__table__.delete().where(MaterialDB.id == mid))
-        await session.commit()
-        return {"ok": True}
+@app.delete("/api/materials/{mat_id}")
+def del_material(mat_id: int):
+    db = SessionLocal()
+    mat = db.query(Material).get(mat_id)
+    if not mat:
+        raise HTTPException(status_code=404)
+    db.delete(mat)
+    db.commit()
+    return {"ok": True}
 
 @app.get("/api/stories")
-async def get_stories():
-    async with SessionLocal() as session:
-        sts = await session.execute(
-            StoryDB.__table__.select().order_by(StoryDB.id.desc())
-        )
-        return [Story(**dict(s)) for s in sts.fetchall()]
+def get_stories():
+    db = SessionLocal()
+    st = db.query(Story).all()
+    return [{"id": s.id, "title": s.title, "img": s.img, "url": s.url} for s in st]
 
 @app.post("/api/stories")
-async def add_story(story: Story):
-    story.id = str(uuid.uuid4())
-    async with SessionLocal() as session:
-        dbstory = StoryDB(**story.dict())
-        session.add(dbstory)
-        await session.commit()
-        return story
+def add_story(st: StoryIn):
+    db = SessionLocal()
+    new_st = Story(**st.dict())
+    db.add(new_st)
+    db.commit()
+    db.refresh(new_st)
+    return {"id": new_st.id, "title": new_st.title, "img": new_st.img, "url": new_st.url}
 
-@app.delete("/api/stories/{sid}")
-async def del_story(sid: str):
-    async with SessionLocal() as session:
-        await session.execute(StoryDB.__table__.delete().where(StoryDB.id == sid))
-        await session.commit()
-        return {"ok": True}
-
-@app.get("/")
-async def index():
+@app.delete("/api/stories/{story_id}")
+def del_story(story_id: int):
+    db = SessionLocal()
+    st = db.query(Story).get(story_id)
+    if not st:
+        raise HTTPException(status_code=404)
+    db.delete(st)
+    db.commit()
     return {"ok": True}
