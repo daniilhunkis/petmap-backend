@@ -1,111 +1,88 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import List
-import csv
-import io
+import uuid, json, os
 
 app = FastAPI()
 
-# CORS для фронта на Vercel
+# CORS для фронта (разрешить все, для MVP)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://petmap-gray.vercel.app", "https://petmap-l1hxfum9p-daniils-projects-89f4bca3.vercel.app", "https://petmap.vercel.app", "*"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Модели
-class Metric(BaseModel):
-    event: str
-    time: str
-    section: str = None
+# ===== ХЕЛПЕРЫ =====
+def load_json(filename, fallback=[]):
+    if not os.path.exists(filename):
+        with open(filename, "w") as f: json.dump(fallback, f)
+    with open(filename, "r") as f:
+        try:
+            return json.load(f)
+        except Exception:
+            return fallback
 
-class Feedback(BaseModel):
-    name: str
-    contact: str
-    message: str
-    time: str
+def save_json(filename, data):
+    with open(filename, "w") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+# ===== МОДЕЛИ =====
+class Material(BaseModel):
+    id: str = None
+    title: str
+    img: str
+    text: str
 
 class Story(BaseModel):
-    id: int
+    id: str = None
     title: str
-    content: str
-    time: str
+    img: str
+    url: str
 
-# Хранилища
-metrics_store: List[dict] = []
-feedback_store: List[dict] = []
-stories_store: List[dict] = []
+# ===== API МАТЕРИАЛОВ =====
+MATERIALS_FILE = "materials.json"
 
-@app.get("/")
-def root():
-    return {"status": "ok", "msg": "PetMap backend работает!"}
+@app.get("/api/materials")
+def get_materials():
+    return load_json(MATERIALS_FILE, [])
 
-# Метрики
-@app.post("/metrics")
-async def metrics_endpoint(metric: Metric):
-    metrics_store.append(metric.dict())
-    return {"status": "ok"}
+@app.post("/api/materials")
+def add_material(mat: Material):
+    mats = load_json(MATERIALS_FILE, [])
+    mat.id = str(uuid.uuid4())
+    mats.insert(0, mat.dict())
+    save_json(MATERIALS_FILE, mats)
+    return mat
 
-@app.get("/metrics")
-def get_metrics():
-    return metrics_store[-100:]  # последние 100
+@app.delete("/api/materials/{id}")
+def del_material(id: str):
+    mats = load_json(MATERIALS_FILE, [])
+    mats2 = [m for m in mats if m["id"] != id]
+    if len(mats2) == len(mats): raise HTTPException(status_code=404)
+    save_json(MATERIALS_FILE, mats2)
+    return {"ok": True}
 
-@app.get("/metrics_csv")
-def get_metrics_csv():
-    si = io.StringIO()
-    writer = csv.DictWriter(si, fieldnames=["event", "time", "section"])
-    writer.writeheader()
-    for m in metrics_store[-100:]:
-        writer.writerow(m)
-    output = si.getvalue()
-    return JSONResponse(content={"csv": output})
+# ===== API СТОРИС =====
+STORIES_FILE = "stories.json"
 
-# Обратная связь
-@app.post("/feedback")
-async def feedback_endpoint(feedback: Feedback):
-    feedback_store.append(feedback.dict())
-    return {"status": "ok"}
-
-@app.get("/feedback")
-def get_feedback():
-    return feedback_store[-100:]
-
-@app.get("/feedback_csv")
-def get_feedback_csv():
-    si = io.StringIO()
-    writer = csv.DictWriter(si, fieldnames=["name", "contact", "message", "time"])
-    writer.writeheader()
-    for f in feedback_store[-100:]:
-        writer.writerow(f)
-    output = si.getvalue()
-    return JSONResponse(content={"csv": output})
-
-# Stories
-@app.get("/stories")
+@app.get("/api/stories")
 def get_stories():
-    return stories_store
+    return load_json(STORIES_FILE, [])
 
-@app.post("/stories")
-async def add_story(story: Story):
-    story.id = len(stories_store) + 1
-    stories_store.append(story.dict())
-    return {"status": "ok"}
+@app.post("/api/stories")
+def add_story(story: Story):
+    sts = load_json(STORIES_FILE, [])
+    story.id = str(uuid.uuid4())
+    sts.insert(0, story.dict())
+    save_json(STORIES_FILE, sts)
+    return story
 
-@app.delete("/stories/{story_id}")
-def delete_story(story_id: int):
-    global stories_store
-    stories_store = [s for s in stories_store if s["id"] != story_id]
-    return {"status": "deleted"}
-
-# Краткая аналитика
-@app.get("/admin_stats")
-def admin_stats():
-    return {
-        "metrics": len(metrics_store),
-        "feedback": len(feedback_store),
-        "stories": len(stories_store),
-    }
+@app.delete("/api/stories/{id}")
+def del_story(id: str):
+    sts = load_json(STORIES_FILE, [])
+    sts2 = [s for s in sts if s["id"] != id]
+    if len(sts2) == len(sts): raise HTTPException(status_code=404)
+    save_json(STORIES_FILE, sts2)
+    return {"ok": True}
