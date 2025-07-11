@@ -1,55 +1,45 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
-from typing import List, Optional
-from fastapi.responses import FileResponse
-import os
+from typing import List
 
 app = FastAPI()
 
-# Разрешаем доступ с фронта
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Для разработки можно *, на проде — только свой домен
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Пример заглушки на корень
+@app.get("/")
+def root():
+    return {"status": "Backend works!"}
 
-class Metric(BaseModel):
-    event: str
-    time: str
-    section: Optional[str] = None
-    title: Optional[str] = None
-
+# Пример модели для обратной связи
 class Feedback(BaseModel):
     name: str
-    contact: str
     message: str
-    time: str
 
-metrics_db: List[Metric] = []
-feedback_db: List[Feedback] = []
+# Пример хранения сообщений (in-memory)
+feedback_list: List[Feedback] = []
 
-@app.post("/api/metrics")
-async def save_metric(metric: Metric):
-    metrics_db.append(metric)
-    return {"status": "ok"}
+@app.post("/feedback")
+def send_feedback(feedback: Feedback):
+    feedback_list.append(feedback)
+    return {"success": True, "msg": "Спасибо за обратную связь!"}
 
-@app.post("/api/feedback")
-async def save_feedback(feedback: Feedback):
-    feedback_db.append(feedback)
-    return {"status": "ok"}
+@app.get("/feedback")
+def get_feedback():
+    return feedback_list
 
-@app.get("/api/metrics")
-async def get_metrics():
-    return metrics_db
+# Пример эндпоинта для метрик
+class Metric(BaseModel):
+    event: str
+    info: dict
 
-@app.get("/api/feedbacks")
-async def get_feedbacks():
-    return feedback_db
+metrics: List[Metric] = []
 
-@app.get("/admin")
-async def admin_panel():
-    path = os.path.join(os.path.dirname(__file__), "admin.html")
-    return FileResponse(path)
+@app.post("/metrics")
+def collect_metric(metric: Metric):
+    metrics.append(metric)
+    return {"success": True}
+
+@app.get("/metrics")
+def get_metrics():
+    return metrics
+
+# Можно добавить другие роуты по аналогии
